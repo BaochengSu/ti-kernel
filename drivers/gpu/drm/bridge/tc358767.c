@@ -695,7 +695,6 @@ static int tc_set_video_mode(struct tc_data *tc,
 	 *              (output active video bandwidth in bytes))
 	 * Must be less than tu_size.
 	 */
-
 	in_bw = mode->clock * bits_per_pixel / 8;
 	out_bw = tc->link.base.num_lanes * tc->link.base.rate;
 	max_tu_symbol = DIV_ROUND_UP(in_bw * TU_SIZE_RECOMMENDED, out_bw);
@@ -800,166 +799,174 @@ static int tc_main_link_enable(struct tc_data *tc)
 	int ret;
 	u8 tmp[8];
 	u32 error;
+	int retry;
 
 	dev_dbg(tc->dev, "link enable\n");
+	for (retry = 0; retry < 10; retry++)
+	{
 
-	tc_write(DP0CTL, 0);
+		tc_write(DP0CTL, 0);
 
-	tc_write(DP0_SRCCTRL, tc_srcctrl(tc));
-	/* SSCG and BW27 on DP1 must be set to the same as on DP0 */
-	tc_write(DP1_SRCCTRL,
-		 (tc->link.spread ? DP0_SRCCTRL_SSCG : 0) |
-		 ((tc->link.base.rate != 162000) ? DP0_SRCCTRL_BW27 : 0));
+		tc_write(DP0_SRCCTRL, tc_srcctrl(tc));
+		/* SSCG and BW27 on DP1 must be set to the same as on DP0 */
+		tc_write(DP1_SRCCTRL,
+			 (tc->link.spread ? DP0_SRCCTRL_SSCG : 0) |
+			 ((tc->link.base.rate != 162000) ? DP0_SRCCTRL_BW27 : 0));
 
-	rate = clk_get_rate(tc->refclk);
-	switch (rate) {
-	case 38400000:
-		value = REF_FREQ_38M4;
-		break;
-	case 26000000:
-		value = REF_FREQ_26M;
-		break;
-	case 19200000:
-		value = REF_FREQ_19M2;
-		break;
-	case 13000000:
-		value = REF_FREQ_13M;
-		break;
-	default:
-		return -EINVAL;
-	}
-	value |= SYSCLK_SEL_LSCLK | LSCLK_DIV_2;
-	tc_write(SYS_PLLPARAM, value);
+		rate = clk_get_rate(tc->refclk);
+		switch (rate) {
+		case 38400000:
+			value = REF_FREQ_38M4;
+			break;
+		case 26000000:
+			value = REF_FREQ_26M;
+			break;
+		case 19200000:
+			value = REF_FREQ_19M2;
+			break;
+		case 13000000:
+			value = REF_FREQ_13M;
+			break;
+		default:
+			return -EINVAL;
+		}
+		value |= SYSCLK_SEL_LSCLK | LSCLK_DIV_2;
+		tc_write(SYS_PLLPARAM, value);
 
-	/* Setup Main Link */
-	dp_phy_ctrl = BGREN | PWR_SW_EN | PHY_A0_EN | PHY_M0_EN;
-	if (tc->link.base.num_lanes == 2)
-		dp_phy_ctrl |= PHY_2LANE;
-	tc_write(DP_PHY_CTRL, dp_phy_ctrl);
+		/* Setup Main Link */
+		dp_phy_ctrl = BGREN | PWR_SW_EN | PHY_A0_EN | PHY_M0_EN;
+		if (tc->link.base.num_lanes == 2)
+			dp_phy_ctrl |= PHY_2LANE;
+		tc_write(DP_PHY_CTRL, dp_phy_ctrl);
 
-	/* PLL setup */
-	tc_write(DP0_PLLCTRL, PLLUPDATE | PLLEN);
-	tc_wait_pll_lock(tc);
+		/* PLL setup */
+		tc_write(DP0_PLLCTRL, PLLUPDATE | PLLEN);
+		tc_wait_pll_lock(tc);
 
-	tc_write(DP1_PLLCTRL, PLLUPDATE | PLLEN);
-	tc_wait_pll_lock(tc);
+		tc_write(DP1_PLLCTRL, PLLUPDATE | PLLEN);
+		tc_wait_pll_lock(tc);
 
-	/* Reset/Enable Main Links */
-	dp_phy_ctrl |= DP_PHY_RST | PHY_M1_RST | PHY_M0_RST;
-	tc_write(DP_PHY_CTRL, dp_phy_ctrl);
-	usleep_range(100, 200);
-	dp_phy_ctrl &= ~(DP_PHY_RST | PHY_M1_RST | PHY_M0_RST);
-	tc_write(DP_PHY_CTRL, dp_phy_ctrl);
+		/* Reset/Enable Main Links */
+		dp_phy_ctrl |= DP_PHY_RST | PHY_M1_RST | PHY_M0_RST;
+		tc_write(DP_PHY_CTRL, dp_phy_ctrl);
+		usleep_range(100, 200);
+		dp_phy_ctrl &= ~(DP_PHY_RST | PHY_M1_RST | PHY_M0_RST);
+		tc_write(DP_PHY_CTRL, dp_phy_ctrl);
 
-	timeout = 1000;
-	do {
-		tc_read(DP_PHY_CTRL, &value);
-		udelay(1);
-	} while ((!(value & PHY_RDY)) && (--timeout));
+		timeout = 1000;
+		do {
+			tc_read(DP_PHY_CTRL, &value);
+			udelay(1);
+		} while ((!(value & PHY_RDY)) && (--timeout));
 
-	if (timeout == 0) {
-		dev_err(dev, "timeout waiting for phy become ready");
-		return -ETIMEDOUT;
-	}
+		if (timeout == 0) {
+			dev_err(dev, "timeout waiting for phy become ready");
+			return -ETIMEDOUT;
+		}
 
-	/* Set misc: 8 bits per color */
-	ret = regmap_update_bits(tc->regmap, DP0_MISC, BPC_8, BPC_8);
-	if (ret)
-		goto err;
+		/* Set misc: 8 bits per color */
+		ret = regmap_update_bits(tc->regmap, DP0_MISC, BPC_8, BPC_8);
+		if (ret)
+			goto err;
 
-	/*
-	 * ASSR mode
-	 * on TC358767 side ASSR configured through strap pin
-	 * seems there is no way to change this setting from SW
-	 *
-	 * check is tc configured for same mode
-	 */
-	if (tc->assr != tc->link.assr) {
-		dev_dbg(dev, "Trying to set display to ASSR: %d\n",
-			tc->assr);
-		/* try to set ASSR on display side */
-		tmp[0] = tc->assr;
-		ret = drm_dp_dpcd_writeb(aux, DP_EDP_CONFIGURATION_SET, tmp[0]);
+		/*
+		 * ASSR mode
+		 * on TC358767 side ASSR configured through strap pin
+		 * seems there is no way to change this setting from SW
+		 *
+		 * check is tc configured for same mode
+		 */
+		if (tc->assr != tc->link.assr) {
+			dev_dbg(dev, "Trying to set display to ASSR: %d\n",
+				tc->assr);
+			/* try to set ASSR on display side */
+			tmp[0] = tc->assr;
+			ret = drm_dp_dpcd_writeb(aux, DP_EDP_CONFIGURATION_SET, tmp[0]);
+			if (ret < 0)
+				goto err_dpcd_read;
+			/* read back */
+			ret = drm_dp_dpcd_readb(aux, DP_EDP_CONFIGURATION_SET, tmp);
+			if (ret < 0)
+				goto err_dpcd_read;
+
+			if (tmp[0] != tc->assr) {
+				dev_dbg(dev, "Failed to switch display ASSR to %d, falling back to unscrambled mode\n",
+					 tc->assr);
+				/* trying with disabled scrambler */
+				tc->link.scrambler_dis = true;
+			}
+		}
+
+		/* Setup Link & DPRx Config for Training */
+		ret = drm_dp_link_configure(aux, &tc->link.base);
 		if (ret < 0)
-			goto err_dpcd_read;
-		/* read back */
-		ret = drm_dp_dpcd_readb(aux, DP_EDP_CONFIGURATION_SET, tmp);
-		if (ret < 0)
-			goto err_dpcd_read;
+			goto err_dpcd_write;
 
-		if (tmp[0] != tc->assr) {
-			dev_dbg(dev, "Failed to switch display ASSR to %d, falling back to unscrambled mode\n",
-				 tc->assr);
-			/* trying with disabled scrambler */
-			tc->link.scrambler_dis = true;
+		/* DOWNSPREAD_CTRL */
+		tmp[0] = tc->link.spread ? DP_SPREAD_AMP_0_5 : 0x00;
+		/* MAIN_LINK_CHANNEL_CODING_SET */
+		tmp[1] =  DP_SET_ANSI_8B10B;
+		ret = drm_dp_dpcd_write(aux, DP_DOWNSPREAD_CTRL, tmp, 2);
+		if (ret < 0)
+			goto err_dpcd_write;
+
+		// Reset voltage-swing & pre-emphasis
+		tmp[0] = tmp[1] = DP_TRAIN_VOLTAGE_SWING_LEVEL_0 | DP_TRAIN_PRE_EMPH_LEVEL_0;
+		ret = drm_dp_dpcd_write(aux, DP_TRAINING_LANE0_SET, tmp, 2);
+		if (ret < 0)
+			goto err_dpcd_write;
+
+		/* LINK TRAINING PATTERN 1 */
+
+		/* Set DPCD 0x102 for Training Pattern 1 */
+		tc_write(DP0_SNKLTCTRL, DP_LINK_SCRAMBLING_DISABLE | DP_TRAINING_PATTERN_1);
+
+		tc_write(DP0_LTLOOPCTRL,
+			 (15 << 28) |	/* Defer Iteration Count */
+			 (15 << 24) |	/* Loop Iteration Count */
+			 (0xd << 0));	/* Loop Timer Delay */
+
+		tc_write(DP0_SRCCTRL, tc_srcctrl(tc) | DP0_SRCCTRL_SCRMBLDIS | DP0_SRCCTRL_AUTOCORRECT |
+			 DP0_SRCCTRL_TP1);
+
+		/* Enable DP0 to start Link Training */
+		tc_write(DP0CTL,
+			 ((tc->link.base.capabilities & DP_LINK_CAP_ENHANCED_FRAMING) ? EF_EN : 0) |
+			 DP_EN);
+
+		/* wait */
+		ret = tc_wait_link_training(tc, &error);
+		if (ret)
+			goto err;
+
+		if (error) {
+			dev_dbg(tc->dev, "Link training phase 1 failed: %s\n",
+				training_pattern1_errors[error]);
+			continue;
+		}
+
+		/* LINK TRAINING PATTERN 2 */
+
+		/* Set DPCD 0x102 for Training Pattern 2 */
+		tc_write(DP0_SNKLTCTRL, DP_LINK_SCRAMBLING_DISABLE | DP_TRAINING_PATTERN_2);
+
+		tc_write(DP0_SRCCTRL, tc_srcctrl(tc) | DP0_SRCCTRL_SCRMBLDIS | DP0_SRCCTRL_AUTOCORRECT |
+			 DP0_SRCCTRL_TP2);
+
+		/* wait */
+		ret = tc_wait_link_training(tc, &error);
+		if (ret)
+			goto err;
+
+		if (error) {
+			dev_dbg(tc->dev, "Link training phase 2 failed: %s\n",
+				training_pattern2_errors[error]);
+		}else{
+			break;
 		}
 	}
-
-	/* Setup Link & DPRx Config for Training */
-	ret = drm_dp_link_configure(aux, &tc->link.base);
-	if (ret < 0)
-		goto err_dpcd_write;
-
-	/* DOWNSPREAD_CTRL */
-	tmp[0] = tc->link.spread ? DP_SPREAD_AMP_0_5 : 0x00;
-	/* MAIN_LINK_CHANNEL_CODING_SET */
-	tmp[1] =  DP_SET_ANSI_8B10B;
-	ret = drm_dp_dpcd_write(aux, DP_DOWNSPREAD_CTRL, tmp, 2);
-	if (ret < 0)
-		goto err_dpcd_write;
-
-	// Reset voltage-swing & pre-emphasis
-	tmp[0] = tmp[1] = DP_TRAIN_VOLTAGE_SWING_LEVEL_0 | DP_TRAIN_PRE_EMPH_LEVEL_0;
-	ret = drm_dp_dpcd_write(aux, DP_TRAINING_LANE0_SET, tmp, 2);
-	if (ret < 0)
-		goto err_dpcd_write;
-
-	/* LINK TRAINING PATTERN 1 */
-
-	/* Set DPCD 0x102 for Training Pattern 1 */
-	tc_write(DP0_SNKLTCTRL, DP_LINK_SCRAMBLING_DISABLE | DP_TRAINING_PATTERN_1);
-
-	tc_write(DP0_LTLOOPCTRL,
-		 (15 << 28) |	/* Defer Iteration Count */
-		 (15 << 24) |	/* Loop Iteration Count */
-		 (0xd << 0));	/* Loop Timer Delay */
-
-	tc_write(DP0_SRCCTRL, tc_srcctrl(tc) | DP0_SRCCTRL_SCRMBLDIS | DP0_SRCCTRL_AUTOCORRECT |
-		 DP0_SRCCTRL_TP1);
-
-	/* Enable DP0 to start Link Training */
-	tc_write(DP0CTL,
-		 ((tc->link.base.capabilities & DP_LINK_CAP_ENHANCED_FRAMING) ? EF_EN : 0) |
-		 DP_EN);
-
-	/* wait */
-	ret = tc_wait_link_training(tc, &error);
-	if (ret)
-		goto err;
-
-	if (error) {
-		dev_err(tc->dev, "Link training phase 1 failed: %s\n",
-			training_pattern1_errors[error]);
-		ret = -ENODEV;
-		goto err;
-	}
-
-	/* LINK TRAINING PATTERN 2 */
-
-	/* Set DPCD 0x102 for Training Pattern 2 */
-	tc_write(DP0_SNKLTCTRL, DP_LINK_SCRAMBLING_DISABLE | DP_TRAINING_PATTERN_2);
-
-	tc_write(DP0_SRCCTRL, tc_srcctrl(tc) | DP0_SRCCTRL_SCRMBLDIS | DP0_SRCCTRL_AUTOCORRECT |
-		 DP0_SRCCTRL_TP2);
-
-	/* wait */
-	ret = tc_wait_link_training(tc, &error);
-	if (ret)
-		goto err;
-
-	if (error) {
-		dev_err(tc->dev, "Link training phase 2 failed: %s\n",
-			training_pattern2_errors[error]);
+	if (retry == 10) {
+		dev_err(tc->dev, "Link training failed \n");
 		ret = -ENODEV;
 		goto err;
 	}
