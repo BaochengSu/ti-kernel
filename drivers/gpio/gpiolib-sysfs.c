@@ -362,6 +362,72 @@ static ssize_t active_low_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(active_low);
 
+static ssize_t drive_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct gpiod_data *data = dev_get_drvdata(dev);
+	struct gpio_desc *desc = data->desc;
+	ssize_t			status;
+
+	mutex_lock(&data->mutex);
+
+	if (test_bit(FLAG_PULLUP, &desc->flags))
+		status = sprintf(buf, "pullup\n");
+	else if (test_bit(FLAG_PULLDOWN, &desc->flags))
+		status = sprintf(buf, "pulldown\n");
+	else if (test_bit(FLAG_STRONG, &desc->flags))
+		status = sprintf(buf, "strong\n");
+	else if (test_bit(FLAG_HIZ, &desc->flags))
+		status = sprintf(buf, "hiz\n");
+	else
+		status = -EINVAL;
+
+	mutex_unlock(&data->mutex);
+	return status;
+}
+
+static ssize_t drive_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct gpiod_data *data = dev_get_drvdata(dev);
+	struct gpio_desc *desc = data->desc;
+	ssize_t			status;
+
+	mutex_lock(&data->mutex);
+
+	clear_bit(FLAG_PULLUP, &desc->flags);
+	clear_bit(FLAG_PULLDOWN, &desc->flags);
+	clear_bit(FLAG_STRONG, &desc->flags);
+	clear_bit(FLAG_HIZ, &desc->flags);
+	if (sysfs_streq(buf, "pullup")) {
+		status = gpiod_set_drive(desc, GPIOF_DRIVE_PULLUP);
+		if (!status) {
+			set_bit(FLAG_PULLUP, &desc->flags);
+		}
+	} else if (sysfs_streq(buf, "pulldown")) {
+		status = gpiod_set_drive(desc, GPIOF_DRIVE_PULLDOWN);
+		if (!status) {
+			set_bit(FLAG_PULLDOWN, &desc->flags);
+		}
+	} else if (sysfs_streq(buf, "strong")) {
+		status = gpiod_set_drive(desc, GPIOF_DRIVE_STRONG);
+		if (!status) {
+			set_bit(FLAG_STRONG, &desc->flags);
+		}
+	} else if (sysfs_streq(buf, "hiz")) {
+		status = gpiod_set_drive(desc, GPIOF_DRIVE_HIZ);
+		if (!status) {
+			set_bit(FLAG_HIZ, &desc->flags);
+		}
+	} else {
+		status = -EINVAL;
+	}
+
+	mutex_unlock(&data->mutex);
+	return status ? : size;
+}
+static DEVICE_ATTR_RW(drive);
+
 static umode_t gpio_is_visible(struct kobject *kobj, struct attribute *attr,
 			       int n)
 {
@@ -389,6 +455,7 @@ static struct attribute *gpio_attrs[] = {
 	&dev_attr_edge.attr,
 	&dev_attr_value.attr,
 	&dev_attr_active_low.attr,
+	&dev_attr_drive.attr,
 	NULL,
 };
 

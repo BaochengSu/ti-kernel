@@ -14,6 +14,7 @@
 #include <linux/acpi.h>
 #include <linux/gpio/driver.h>
 #include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -137,6 +138,8 @@ struct pca953x_chip {
 	unsigned gpio_start;
 	u8 reg_output[MAX_BANK];
 	u8 reg_direction[MAX_BANK];
+	u8 reg_pull_en[MAX_BANK];
+	u8 reg_pull_sel[MAX_BANK];
 	struct mutex i2c_lock;
 
 #ifdef CONFIG_GPIO_PCA953X_IRQ
@@ -285,6 +288,60 @@ static int pca953x_read_regs(struct pca953x_chip *chip, int reg, u8 *val)
 	}
 
 	return 0;
+}
+
+static int pca953x_gpio_set_drive(struct gpio_chip *gc,
+		unsigned off, unsigned mode)
+{
+	struct pca953x_chip *chip;
+	u8 pull_en_reg_val, pull_sel_reg_val;
+	int ret = 0;
+
+	chip = gpiochip_get_data(gc);
+
+	if (PCA_CHIP_TYPE(chip->driver_data) != PCA953X_TYPE)
+		return -EINVAL;
+
+	mutex_lock(&chip->i2c_lock);
+
+	switch (mode) {
+	case GPIOF_DRIVE_PULLUP:
+		pull_en_reg_val = chip->reg_pull_en[off / BANK_SZ]
+			| (1u << (off % BANK_SZ));
+		pull_sel_reg_val = chip->reg_pull_sel[off / BANK_SZ]
+			| (1u << (off % BANK_SZ));
+		break;
+	case GPIOF_DRIVE_PULLDOWN:
+		pull_en_reg_val = chip->reg_pull_en[off / BANK_SZ]
+			| (1u << (off % BANK_SZ));
+		pull_sel_reg_val = chip->reg_pull_sel[off / BANK_SZ]
+			& ~(1u << (off % BANK_SZ));
+		break;
+	case GPIOF_DRIVE_STRONG:
+	case GPIOF_DRIVE_HIZ:
+		pull_en_reg_val = chip->reg_pull_en[off / BANK_SZ]
+			& ~(1u << (off % BANK_SZ));
+		pull_sel_reg_val = chip->reg_pull_sel[off / BANK_SZ];
+		break;
+	default:
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	ret = pca953x_write_single(chip, PCAL953X_PULL_EN,
+				pull_en_reg_val, off);
+	if (ret)
+		goto exit;
+	chip->reg_pull_en[off / BANK_SZ] = pull_en_reg_val;
+
+	ret = pca953x_write_single(chip, PCAL953X_PULL_SEL,
+				pull_sel_reg_val, off);
+	if (ret)
+		goto exit;
+	chip->reg_pull_sel[off / BANK_SZ] = pull_sel_reg_val;
+exit:
+	mutex_unlock(&chip->i2c_lock);
+	return ret;
 }
 
 static int pca953x_gpio_direction_input(struct gpio_chip *gc, unsigned off)
@@ -453,6 +510,9 @@ static void pca953x_setup_gpio(struct pca953x_chip *chip, int gpios)
 	gc->parent = &chip->client->dev;
 	gc->owner = THIS_MODULE;
 	gc->names = chip->names;
+
+	if (PCA_CHIP_TYPE(chip->driver_data) == PCA953X_TYPE)
+		gc->set_drive = pca953x_gpio_set_drive;
 }
 
 #ifdef CONFIG_GPIO_PCA953X_IRQ
@@ -723,8 +783,9 @@ static int pca953x_irq_setup(struct pca953x_chip *chip,
 
 static int device_pca953x_init(struct pca953x_chip *chip, u32 invert)
 {
-	int ret;
+	int i, ret;
 	u8 val[MAX_BANK];
+	u32 pull_en_reg_val, pull_sel_reg_val;
 
 	chip->regs = &pca953x_regs;
 
@@ -736,6 +797,18 @@ static int device_pca953x_init(struct pca953x_chip *chip, u32 invert)
 				chip->reg_direction);
 	if (ret)
 		goto out;
+
+	for (i = 0; i < NBANK(chip); i++) {
+		ret = pca953x_read_single(chip, PCAL953X_PULL_EN, &pull_en_reg_val, i*BANK_SZ);
+		chip->reg_pull_en[i] = (u8)pull_en_reg_val;
+		if (ret)
+			goto out;
+
+		ret = pca953x_read_single(chip, PCAL953X_PULL_SEL, &pull_sel_reg_val, i*BANK_SZ);
+		chip->reg_pull_sel[i] = (u8)pull_sel_reg_val;
+		if (ret)
+			goto out;
+	}
 
 	/* set platform specific polarity inversion */
 	if (invert)
@@ -957,6 +1030,7 @@ static const struct of_device_id pca953x_dt_ids[] = {
 	{ .compatible = "nxp,pca9505", .data = OF_953X(40, PCA_INT), },
 	{ .compatible = "nxp,pca9534", .data = OF_953X( 8, PCA_INT), },
 	{ .compatible = "nxp,pca9535", .data = OF_953X(16, PCA_INT), },
+	{ .compatible = "nxp,pcal9535", .data = OF_953X(16, PCA_INT | PCA_PCAL), },
 	{ .compatible = "nxp,pca9536", .data = OF_953X( 4, 0), },
 	{ .compatible = "nxp,pca9537", .data = OF_953X( 4, PCA_INT), },
 	{ .compatible = "nxp,pca9538", .data = OF_953X( 8, PCA_INT), },
