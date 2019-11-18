@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * (C) Copyright 2018-2020 Siemens AG
+ */
+
+/* workaround for uart issues (DMA warnings and RCU preempt) */
+
+&main_uart0 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&main_uart1 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&mcu_uart0 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+/*
+ * Swap clock TISCI clock IDs between sdhci0 and sdhci1 to work
+ * around an issue in System Firmware 2019.12a (and earlier) known
+ * as SYSFW-3179.
+ */
+
+&sdhci0 {
+	clocks = <&k3_clks 48 0>, <&k3_clks 48 1>;
+	assigned-clocks = <&k3_clks 48 1>;
+	assigned-clock-rates = <142860000>;
+};
+
+&sdhci1 {
+	clocks = <&k3_clks 47 0>, <&k3_clks 47 1>;
+};

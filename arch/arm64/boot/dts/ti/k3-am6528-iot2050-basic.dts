@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * (C) Copyright 2018-2020 Siemens AG
+ */
+
+/dts-v1/;
+
+#include "k3-am65-iot2050.dtsi"
+#include "k3-am6528-iot2050-basic.dtsi"
+#include "k3-am65-main-abi3_x.dtsi"
+#include "k3-am65-mcu-abi3_x.dtsi"
+#include "k3-am65-wakeup-abi3_x.dtsi"

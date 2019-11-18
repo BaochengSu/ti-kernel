@@ -174,6 +174,7 @@ static int davinci_gpio_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct resource *res;
 	char label[MAX_LABEL_SIZE];
+	int gpio_alias_id;
 
 	pdata = davinci_gpio_get_pdata(pdev);
 	if (!pdata) {
@@ -251,6 +252,15 @@ static int davinci_gpio_probe(struct platform_device *pdev)
 		chips->chip.request = gpiochip_generic_request;
 		chips->chip.free = gpiochip_generic_free;
 	}
+	/*
+	 * Traditionally the base is given out in first-come-first-serve order.
+	 * This might shuffle the numbering of gpios if the probe order changes.
+	 * So make the base deterministical if the device tree specifies alias
+	 * ids.
+	 */
+	gpio_alias_id = of_alias_get_id(dev->of_node, "gpio");
+	if (gpio_alias_id >= 0)
+		chips->chip.base = gpio_alias_id;
 #endif
 	spin_lock_init(&chips->lock);
 	bank_base += ngpio;

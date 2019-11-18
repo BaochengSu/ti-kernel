@@ -22,6 +22,11 @@ dtb-$(CONFIG_ARCH_K3_AM6_SOC) += k3-am654-base-board.dtb \
 	k3-am654-base-board-jailhouse.dtbo \
 	k3-am654-evm-prupwm.dtbo
 
+dtb-$(CONFIG_ARCH_K3_AM6_SOC) += k3-am6528-iot2050-basic-oldfw.dtb
+dtb-$(CONFIG_ARCH_K3_AM6_SOC) += k3-am6528-iot2050-basic.dtb
+dtb-$(CONFIG_ARCH_K3_AM6_SOC) += k3-am6548-iot2050-advanced-oldfw.dtb
+dtb-$(CONFIG_ARCH_K3_AM6_SOC) += k3-am6548-iot2050-advanced.dtb
+
 dtb-$(CONFIG_ARCH_K3_J721E_SOC) += k3-j721e-common-proc-board.dtb \
 				   k3-j721e-proc-board-tps65917.dtb \
 				   k3-j721e-common-proc-board-infotainment.dtbo \
