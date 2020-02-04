@@ -27,8 +27,10 @@
 #define DP83867_DEVADDR		0x1f
 
 #define MII_DP83867_PHYCTRL	0x10
+#define MII_DP83867_PHYSTS	0x11
 #define MII_DP83867_MICR	0x12
 #define MII_DP83867_ISR		0x13
+#define DP83867_CFG2		0x14
 #define DP83867_CTRL		0x1f
 #define DP83867_CFG3		0x1e
 
@@ -107,6 +109,15 @@
 #define DP83867_IO_MUX_CFG_CLK_O_SEL_MASK	(0x1f << 8)
 #define DP83867_IO_MUX_CFG_CLK_O_SEL_SHIFT	8
 
+/* PHY STS bits */
+#define DP83867_PHYSTS_1000			BIT(15)
+#define DP83867_PHYSTS_100			BIT(14)
+#define DP83867_PHYSTS_DUPLEX			BIT(13)
+#define DP83867_PHYSTS_LINK			BIT(10)
+
+/* CFG2 bits */
+#define DP83867_SPEED_OPTOMIZED_EN		(BIT(8) | BIT(9))
+
 /* CFG3 bits */
 #define DP83867_CFG3_INT_OE			BIT(7)
 #define DP83867_CFG3_ROBUST_AUTO_MDIX		BIT(9)
@@ -165,6 +176,34 @@ static int dp83867_config_intr(struct phy_device *phydev)
 
 	micr_status = 0x0;
 	return phy_write(phydev, MII_DP83867_MICR, micr_status);
+}
+
+static int dp83867_read_status(struct phy_device *phydev)
+{
+	int status = phy_read(phydev, MII_DP83867_PHYSTS);
+
+	if (status & DP83867_PHYSTS_DUPLEX)
+		phydev->duplex = DUPLEX_FULL;
+	else
+		phydev->duplex = DUPLEX_HALF;
+
+	if (status & DP83867_PHYSTS_1000)
+		phydev->speed = SPEED_1000;
+	else if (status & DP83867_PHYSTS_100)
+		phydev->speed = SPEED_100;
+	else
+		phydev->speed = SPEED_10;
+
+	if (status & DP83867_PHYSTS_LINK)
+		phydev->link = 1;
+	else
+		phydev->link = 0;
+
+	phydev->pause = 0;
+	phydev->asym_pause = 0;
+	phydev->lp_advertising = 0;
+
+	return 0;
 }
 
 static int dp83867_config_port_mirroring(struct phy_device *phydev)
@@ -312,6 +351,13 @@ static int dp83867_config_init(struct phy_device *phydev)
 	struct dp83867_private *dp83867 = phydev->priv;
 	int ret, val, bs;
 	u16 delay;
+
+	/* Force the speed opotimization for the PHY even if it strapped */
+	val = phy_read(phydev, DP83867_CFG2);
+	val |= DP83867_SPEED_OPTOMIZED_EN;
+	ret = phy_write(phydev, DP83867_CFG2, val);
+	if (ret)
+		return ret;
 
 	ret = dp83867_verify_rgmii_cfg(phydev);
 	if (ret)
@@ -493,6 +539,8 @@ static struct phy_driver dp83867_driver[] = {
 		.probe          = dp83867_probe,
 		.config_init	= dp83867_config_init,
 		.soft_reset	= dp83867_phy_reset,
+
+		.read_status	= dp83867_read_status,
 
 		/* IRQ related */
 		.ack_interrupt	= dp83867_ack_interrupt,
