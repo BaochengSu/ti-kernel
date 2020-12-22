@@ -357,8 +357,8 @@ EXPORT_SYMBOL(mmc_of_parse);
  */
 struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 {
-	int err;
 	struct mmc_host *host;
+	int of_id = -1, id = -1;
 
 	host = kzalloc(sizeof(struct mmc_host) + extra, GFP_KERNEL);
 	if (!host)
@@ -367,13 +367,26 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 	/* scanning will be enabled when we're ready */
 	host->rescan_disable = 1;
 
-	err = ida_simple_get(&mmc_host_ida, 0, 0, GFP_KERNEL);
-	if (err < 0) {
+	if (dev->of_node) {
+		of_id = of_alias_get_id(dev->of_node, "mmc");
+	}
+
+	if (of_id >= 0) {
+		id = ida_simple_get(&mmc_host_ida, of_id, of_id + 1, GFP_NOWAIT);
+		if (id < 0)
+			dev_warn(dev, "aliases ID %d not available\n", of_id);
+	}
+
+	if (id < 0)
+		id = ida_simple_get(&mmc_host_ida, 0, 0, GFP_NOWAIT);
+
+	if (id >= 0)
+		host->index = id;
+
+	if (id < 0) {
 		kfree(host);
 		return NULL;
 	}
-
-	host->index = err;
 
 	dev_set_name(&host->class_dev, "mmc%d", host->index);
 
